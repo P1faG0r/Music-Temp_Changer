@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Birch · Slowed Visualizer</title>
+<style>
+:root{color-scheme:dark;--ink:#0b0b0a;--birch:#ece6d3;--birch-dim:#a9a393;--line:rgba(236,230,211,.18);box-sizing:border-box}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--ink);color:var(--birch);font-family:Georgia,"Times New Roman",serif;overflow:hidden}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+#title{position:fixed;top:calc(env(safe-area-inset-top,0px) + 18px);left:0;right:0;text-align:center;letter-spacing:.3em;font-size:12px;text-transform:uppercase;color:var(--birch-dim);padding:0 16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#hint{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 196px);text-align:center;font-size:14px;color:var(--birch-dim);font-style:italic;transition:opacity .6s}
+#ui{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 16px);width:min(94vw,560px);display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;justify-content:center;padding:12px 16px;border:1px solid var(--line);border-radius:18px;background:rgba(11,11,10,.62);backdrop-filter:blur(10px)}
+.btn,button{background:var(--birch);color:var(--ink);border:0;border-radius:999px;padding:9px 16px;font:600 13px Georgia,serif;cursor:pointer}
+button#pp{width:40px;height:40px;padding:0;font-size:15px}
+.row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--birch-dim)}
+input[type=range]{accent-color:var(--birch);width:110px}
+#time{font-variant-numeric:tabular-nums;font-size:12px;color:var(--birch-dim);min-width:84px;text-align:center}
+#hint,#ui{transition:opacity .4s}
+body.clean #ui,body.clean #hint{opacity:0;pointer-events:none}
+#title{outline:none;cursor:text;pointer-events:auto;font-size:14px;min-height:1.4em}
+#title:focus{color:var(--birch)}
+#title:empty::before{content:attr(data-ph);opacity:.4}
+#eye{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);right:10px;width:38px;height:38px;padding:0;font-size:16px;background:rgba(11,11,10,.6);color:var(--birch);border:1px solid var(--line);opacity:.7;transition:opacity .3s}
+body.clean #eye{opacity:0}
+body.clean #eye:hover{opacity:.7}
+.full{width:100%;justify-content:center}
+#sw{gap:10px}
+#sw button{width:26px;height:26px;padding:0;border:2px solid var(--line);border-radius:50%}
+#cp{width:34px;height:28px;padding:0;border:0;background:none;cursor:pointer}
+#ui button#fs,#ui button#hide{background:transparent;color:var(--birch);border:1px solid var(--line)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="title" contenteditable="true" spellcheck="false" data-ph="Название песни">Birch · Slowed</div>
+<button id="eye" title="Скрыть или показать панель (H)" aria-label="Панель">👁</button>
+<div id="hint">Выбери трек или перетащи файл сюда</div>
+<div id="ui">
+  <label class="btn">Выбрать трек<input id="file" type="file" accept="audio/*" hidden></label>
+  <button id="pp" aria-label="Play">▶</button>
+  <span id="time">0:00 / 0:00</span>
+  <div class="row">slowed <input id="sp" type="range" min="50" max="110" value="80"><b id="spv">0.80x</b></div>
+  <div class="row">reverb <input id="rv" type="range" min="0" max="100" value="35"></div>
+  <div class="row full"><input id="seek" type="range" min="0" max="1000" value="0" style="width:100%" aria-label="Перемотка"></div>
+  <div class="row full" id="sw"><input id="cp" type="color" value="#ece6d3" aria-label="Свой цвет" title="Свой цвет"></div>
+  <button id="fs">На весь экран</button><button id="hide">Скрыть панель</button>
+</div>
+<audio id="a" crossorigin="anonymous"></audio>
+<script>
+(function(){
+var cv=document.getElementById('c'),ctx=cv.getContext('2d');
+var audio=document.getElementById('a'),pp=document.getElementById('pp');
+var W=0,H=0,DPR=1,bg=null,disc=null;
+function rnd(a,b){return a+Math.random()*(b-a)}
+var CR=236,CG=230,CB=211;
+function col(a){return 'rgba('+CR+','+CG+','+CB+','+a+')'}
+function lt(f){return 'rgb('+Math.round(CR+(255-CR)*f)+','+Math.round(CG+(255-CG)*f)+','+Math.round(CB+(255-CB)*f)+')'}
+function dk(f){return 'rgb('+Math.round(CR*f)+','+Math.round(CG*f)+','+Math.round(CB*f)+')'}
+
+/* ---------- textures: birch trunks + birch disc ---------- */
+function makeBg(){
+  bg=document.createElement('canvas');bg.width=W*DPR;bg.height=H*DPR;
+  var g=bg.getContext('2d');g.scale(DPR,DPR);
+  var n=Math.max(6,Math.round(W/150));
+  for(var i=0;i<n;i++){
+    var x=rnd(0,W),w=rnd(14,44);
+    var gr=g.createLinearGradient(x,0,x+w,0);
+    gr.addColorStop(0,col(.03));gr.addColorStop(.5,col(.11));gr.addColorStop(1,col(.02));
+    g.fillStyle=gr;g.fillRect(x,0,w,H);
+    for(var k=0;k<H/22;k++){
+      g.fillStyle='rgba(8,8,7,'+rnd(.4,.8)+')';
+      var dw=rnd(w*.2,w*.8),dy=rnd(0,H);
+      g.fillRect(x+rnd(0,w-dw),dy,dw,rnd(1.5,4));
+    }
+  }
+  var v=g.createRadialGradient(W/2,H/2,Math.min(W,H)*.2,W/2,H/2,Math.max(W,H)*.75);
+  v.addColorStop(0,'rgba(11,11,10,0)');v.addColorStop(1,'rgba(11,11,10,.95)');
+  g.fillStyle=v;g.fillRect(0,0,W,H);
+}
+function makeDisc(){
+  var s=500;disc=document.createElement('canvas');disc.width=disc.height=s;
+  var g=disc.getContext('2d');
+  g.beginPath();g.arc(s/2,s/2,s/2-2,0,7);g.closePath();g.save();g.clip();
+  var b=g.createRadialGradient(s*.4,s*.35,20,s/2,s/2,s/2);
+  b.addColorStop(0,lt(.55));b.addColorStop(1,dk(.88));
+  g.fillStyle=b;g.fillRect(0,0,s,s);
+  for(var i=0;i<46;i++){
+    g.fillStyle='rgba(18,16,13,'+rnd(.55,.95)+')';
+    var w=rnd(30,150),h=rnd(4,14),x=rnd(-20,s),y=rnd(0,s);
+    g.beginPath();g.roundRect(x,y,w,h,h/2);g.fill();
+  }
+  g.restore();
+  g.lineWidth=4;g.strokeStyle='#0b0b0a';g.beginPath();g.arc(s/2,s/2,s/2-2,0,7);g.stroke();
+}
+function resize(){
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);makeBg();
+}
+addEventListener('resize',resize);resize();makeDisc();
+
+/* ---------- UI: colors, title, panel ---------- */
+var titleEl=document.getElementById('title'),curKey='',seekEl=document.getElementById('seek'),seeking=false;
+function setColor(h,save){
+  var m=/^#?([0-9a-f]{6})$/i.exec(h);if(!m)return;
+  var n=parseInt(m[1],16),st=document.documentElement.style;
+  CR=n>>16;CG=(n>>8)&255;CB=n&255;
+  st.setProperty('--birch','#'+m[1]);st.setProperty('--birch-dim',col(.7));st.setProperty('--line',col(.18));
+  document.getElementById('cp').value='#'+m[1];
+  makeBg();makeDisc();
+  if(save)try{localStorage.setItem('bc',m[1])}catch(e){}
+}
+[['Береза','#ece6d3'],['Лёд','#bfe3ff'],['Закат','#ff9a6b'],['Неон','#ff4fd8'],['Мята','#8dffc4'],['Лаванда','#c3a6ff'],['Кровь','#ff3b4a']].forEach(function(c){
+  var b=document.createElement('button');b.style.background=c[1];b.title=c[0];b.setAttribute('aria-label',c[0]);
+  b.onclick=function(){setColor(c[1],true)};
+  document.getElementById('sw').insertBefore(b,document.getElementById('cp'));
+});
+document.getElementById('cp').oninput=function(e){setColor(e.target.value,true)};
+try{var sc=localStorage.getItem('bc');if(sc)setColor(sc,false)}catch(e){}
+titleEl.oninput=function(){if(curKey)try{localStorage.setItem(curKey,titleEl.textContent)}catch(e){}};
+titleEl.addEventListener('paste',function(e){e.preventDefault();document.execCommand('insertText',false,(e.clipboardData.getData('text')||'').replace(/\n/g,' '))});
+seekEl.oninput=function(){seeking=true;if(audio.duration)audio.currentTime=seekEl.value/1000*audio.duration};
+seekEl.onchange=function(){seeking=false};
+function toggleClean(){document.body.classList.toggle('clean')}
+document.getElementById('hide').onclick=toggleClean;
+document.getElementById('eye').onclick=toggleClean;
+addEventListener('dblclick',function(e){if(e.target===cv)toggleClean()});
+document.getElementById('fs').onclick=function(){var d=document.documentElement;if(document.fullscreenElement)document.exitFullscreen();else if(d.requestFullscreen)d.requestFullscreen()};
+addEventListener('keydown',function(e){
+  if(document.activeElement===titleEl){if(e.key==='Enter'){e.preventDefault();titleEl.blur()}return}
+  if(e.key==='h'||e.key==='H'||e.key==='р'||e.key==='Р')toggleClean();
+  else if(e.key==='f'||e.key==='F'||e.key==='а'||e.key==='А')document.getElementById('fs').onclick();
+  else if(e.code==='Space'&&e.target===document.body){e.preventDefault();pp.onclick()}
+});
+audio.onerror=function(){var h=document.getElementById('hint');h.textContent='Не удалось открыть этот файл. Попробуй mp3 или wav.';h.style.opacity=1};
+
+/* ---------- audio graph ---------- */
+var AC,an,data,dry,wet,conv,src,ready=false;
+function initAudio(){
+  if(ready)return;
+  AC=new (window.AudioContext||window.webkitAudioContext)();
+  src=AC.createMediaElementSource(audio);
+  an=AC.createAnalyser();an.fftSize=2048;an.smoothingTimeConstant=.82;
+  data=new Uint8Array(an.frequencyBinCount);
+  dry=AC.createGain();wet=AC.createGain();conv=AC.createConvolver();
+  var len=AC.sampleRate*3.2,ir=AC.createBuffer(2,len,AC.sampleRate);
+  for(var c=0;c<2;c++){var d=ir.getChannelData(c);for(var i=0;i<len;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/len,2.6)}
+  conv.buffer=ir;
+  src.connect(an);an.connect(dry);dry.connect(AC.destination);
+  src.connect(conv);conv.connect(wet);wet.connect(AC.destination);
+  setRv();ready=true;
+}
+function setRate(){
+  var r=document.getElementById('sp').value/100;
+  audio.preservesPitch=false;audio.mozPreservesPitch=false;audio.webkitPreservesPitch=false;
+  audio.playbackRate=r;document.getElementById('spv').textContent=r.toFixed(2)+'x';
+}
+function setRv(){if(wet){var v=document.getElementById('rv').value/100;wet.gain.value=v*1.1;dry.gain.value=1-v*.25}}
+document.getElementById('sp').oninput=setRate;
+document.getElementById('rv').oninput=setRv;
+
+function load(f){
+  if(!f)return;
+  audio.src=URL.createObjectURL(f);
+  curKey='bt:'+f.name;var sv=null;try{sv=localStorage.getItem(curKey)}catch(e){}
+  titleEl.textContent=sv!==null?sv:f.name.replace(/\.[^.]+$/,'');
+  document.getElementById('hint').style.opacity=0;
+  initAudio();AC.resume();setRate();audio.play();
+}
+document.getElementById('file').onchange=function(e){load(e.target.files[0])};
+addEventListener('dragover',function(e){e.preventDefault()});
+addEventListener('drop',function(e){e.preventDefault();load(e.dataTransfer.files[0])});
+pp.onclick=function(){
+  if(!audio.src)return;
+  initAudio();AC.resume();
+  if(audio.paused)audio.play();else audio.pause();
+};
+audio.onplay=function(){pp.textContent='❚❚'};
+audio.onpause=function(){pp.textContent='▶'};
+function fmt(t){t=isFinite(t)?t:0;return Math.floor(t/60)+':'+('0'+Math.floor(t%60)).slice(-2)}
+
+/* ---------- visual state ---------- */
+var N=120,sm=new Float32Array(N),bass=0,avg=.2,kick=0,rot=0,t0=0;
+var P=[];for(var i=0;i<90;i++)P.push({x:Math.random(),y:Math.random(),s:rnd(.8,3),v:rnd(.03,.12),p:rnd(0,6.28)});
+
+function frame(t){
+  requestAnimationFrame(frame);
+  var dt=Math.min((t-t0)/16.7,3)||1;t0=t;
+  var playing=ready&&!audio.paused;
+  var levels=new Float32Array(N/2),b=0;
+  if(playing){
+    an.getByteFrequencyData(data);
+    for(var i=0;i<N/2;i++){
+      var bin=2+Math.floor(Math.pow(i/(N/2),1.9)*320);
+      levels[i]=data[bin]/255;
+    }
+    for(var j=1;j<8;j++)b+=data[j];b=b/7/255;
+  }else{
+    var s=t/1000;
+    for(var i=0;i<N/2;i++)levels[i]=.12+.1*Math.sin(s*.9+i*.35)+.05*Math.sin(s*1.7+i*.8);
+    b=.2+.1*Math.sin(s*.8);
+  }
+  bass+=(b-bass)*.25;
+  if(b>avg*1.22&&b>.45&&kick<.4)kick=1;
+  avg+=(b-avg)*.04;kick*=Math.pow(.9,dt);
+  document.getElementById('time').textContent=fmt(audio.currentTime)+' / '+fmt(audio.duration);
+  if(!seeking&&audio.duration)seekEl.value=audio.currentTime/audio.duration*1000;
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0b0b0a';ctx.fillRect(0,0,W,H);
+  ctx.globalAlpha=.55+bass*.6;ctx.drawImage(bg,0,0,W,H);ctx.globalAlpha=1;
+
+  var cx=W/2+(kick>.5?rnd(-1.5,1.5):0),cy=H/2-24,m=Math.min(W,H);
+  var R=m*.17*(1+bass*.22+kick*.06),maxL=m*.2;
+
+  /* birch glow */
+  var gl=ctx.createRadialGradient(cx,cy,R*.6,cx,cy,R*3);
+  gl.addColorStop(0,col(.1+bass*.25));gl.addColorStop(1,col(0));
+  ctx.fillStyle=gl;ctx.fillRect(0,0,W,H);
+
+  /* particles (birch specks) */
+  for(var i=0;i<P.length;i++){
+    var p=P[i];
+    p.y-=p.v*(1+bass*3.5)*dt*.01*60/60;p.p+=.01*dt;
+    if(p.y<-.02){p.y=1.02;p.x=Math.random()}
+    ctx.fillStyle=col(.25+bass*.5);
+    ctx.beginPath();ctx.arc((p.x+Math.sin(p.p)*.02)*W,p.y*H,p.s*(1+bass),0,7);ctx.fill();
+  }
+
+  /* spectrum ring */
+  rot+=.0012*dt*(1+bass*2);
+  ctx.save();ctx.translate(cx,cy);ctx.rotate(rot);
+  ctx.lineCap='round';ctx.shadowColor=col(.7);ctx.shadowBlur=12;
+  for(var i=0;i<N;i++){
+    var k=i<N/2?i:N-1-i;
+    var v=levels[k];
+    sm[i]=Math.max(v,sm[i]-.018*dt);
+    var a=i/N*Math.PI*2,l=6+Math.pow(sm[i],1.6)*maxL*1.6;
+    var r0=R*1.18,c=Math.cos(a),s2=Math.sin(a);
+    ctx.strokeStyle=col(.45+sm[i]*.55);
+    ctx.lineWidth=Math.max(2,m*.006);
+    ctx.beginPath();ctx.moveTo(c*r0,s2*r0);ctx.lineTo(c*(r0+l),s2*(r0+l));ctx.stroke();
+  }
+  ctx.shadowBlur=0;
+  ctx.strokeStyle=col(.25);ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(0,0,R*1.1,0,7);ctx.stroke();
+  ctx.beginPath();ctx.arc(0,0,R*1.18+maxL*1.75,0,7);ctx.stroke();
+  ctx.restore();
+
+  /* birch disc */
+  ctx.save();ctx.translate(cx,cy);ctx.rotate(-rot*.6);
+  ctx.drawImage(disc,-R,-R,R*2,R*2);ctx.restore();
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
